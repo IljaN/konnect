@@ -35,7 +35,7 @@ import (
 	"stash.kopano.io/kc/konnect/version"
 )
 
-func newKCIdentityManager(bs *bootstrap) (identity.Manager, error) {
+func newKCIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	logger := bs.cfg.Logger
 
 	if bs.authorizationEndpointURI.String() != "" {

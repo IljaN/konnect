@@ -24,6 +24,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
@@ -44,6 +45,8 @@ const (
 	defaultSigningKeyBits       = 2048
 )
 
+var bootstrapConfig = &Config{}
+
 func commandServe() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:   "serve <identity-manager> [...args]",
@@ -55,27 +58,31 @@ func commandServe() *cobra.Command {
 			}
 		},
 	}
-	serveCmd.Flags().String("listen", "", fmt.Sprintf("TCP listen address (default \"%s\")", defaultListenAddr))
-	serveCmd.Flags().String("iss", "", "OIDC issuer URL")
-	serveCmd.Flags().StringArray("signing-private-key", nil, "Full path to PEM encoded private key file (must match the --signing-method algorithm)")
-	serveCmd.Flags().String("signing-kid", "", "Value of kid field to use in created tokens (uniquely identifying the signing-private-key)")
-	serveCmd.Flags().String("validation-keys-path", "", "Full path to a folder containing PEM encoded private or public key files used for token validaton (file name without extension is used as kid)")
-	serveCmd.Flags().String("encryption-secret", "", fmt.Sprintf("Full path to a file containing a %d bytes secret key", encryption.KeySize))
-	serveCmd.Flags().String("signing-method", "PS256", "JWT default signing method")
-	serveCmd.Flags().String("uri-base-path", "", "Custom base path for URI endpoints")
-	serveCmd.Flags().String("sign-in-uri", "", "Custom redirection URI to sign-in form")
-	serveCmd.Flags().String("signed-out-uri", "", "Custom redirection URI to signed-out goodbye page")
-	serveCmd.Flags().String("authorization-endpoint-uri", "", "Custom authorization endpoint URI")
-	serveCmd.Flags().String("endsession-endpoint-uri", "", "Custom endsession endpoint URI")
-	serveCmd.Flags().String("identifier-client-path", "", fmt.Sprintf("Path to the identifier web client base folder (default \"%s\")", defaultIdentifierClientPath))
-	serveCmd.Flags().String("identifier-registration-conf", "", "Path to a identifier-registration.yaml configuration file")
-	serveCmd.Flags().String("identifier-scopes-conf", "", "Path to a scopes.yaml configuration file")
-	serveCmd.Flags().Bool("insecure", false, "Disable TLS certificate and hostname validation")
-	serveCmd.Flags().StringArray("trusted-proxy", nil, "Trusted proxy IP or IP network (can be used multiple times)")
-	serveCmd.Flags().StringArray("allow-scope", nil, "Allow OAuth 2 scope (can be used multiple times, if not set default scopes are allowed)")
-	serveCmd.Flags().Bool("allow-client-guests", false, "Allow sign in of client controlled guest users")
-	serveCmd.Flags().Bool("allow-dynamic-client-registration", false, "Allow dynamic OAuth2 client registration")
-	serveCmd.Flags().Bool("log-timestamp", true, "Prefix each log line with timestamp")
+
+	cfg := bootstrapConfig
+
+	serveCmd.Flags().StringVar(&cfg.Listen, "listen", "", fmt.Sprintf("TCP listen address (default \"%s\")", defaultListenAddr))
+	serveCmd.Flags().StringVar(&cfg.ISS, "iss", "", "OIDC issuer URL")
+	serveCmd.Flags().StringArrayVar(&cfg.SigningPrivateKeyFiles, "signing-private-key", nil, "Full path to PEM encoded private key file (must match the --signing-method algorithm)")
+	serveCmd.Flags().StringVar(&cfg.SigningKid, "signing-kid", "", "Value of kid field to use in created tokens (uniquely identifying the signing-private-key)")
+	serveCmd.Flags().StringVar(&cfg.ValidationKeysPath, "validation-keys-path", "", "Full path to a folder containing PEM encoded private or public key files used for token validaton (file name without extension is used as kid)")
+	serveCmd.Flags().StringVar(&cfg.EncryptionSecretFile, "encryption-secret", "", fmt.Sprintf("Full path to a file containing a %d bytes secret key", encryption.KeySize))
+	serveCmd.Flags().StringVar(&cfg.SigningMethod, "signing-method", "PS256", "JWT default signing method")
+	serveCmd.Flags().StringVar(&cfg.URIBasePath, "uri-base-path", "", "Custom base path for URI endpoints")
+	serveCmd.Flags().StringVar(&cfg.SignInUri, "sign-in-uri", "", "Custom redirection URI to sign-in form")
+	serveCmd.Flags().StringVar(&cfg.SignedOutUri, "signed-out-uri", "", "Custom redirection URI to signed-out goodbye page")
+	serveCmd.Flags().StringVar(&cfg.AuthorizationEndpointURI, "authorization-endpoint-uri", "", "Custom authorization endpoint URI")
+	serveCmd.Flags().StringVar(&cfg.EndsessionEndpointURI, "endsession-endpoint-uri", "", "Custom endsession endpoint URI")
+	serveCmd.Flags().StringVar(&cfg.IdentifierClientPath, "identifier-client-path", "", fmt.Sprintf("Path to the identifier web client base folder (default \"%s\")", defaultIdentifierClientPath))
+	serveCmd.Flags().StringVar(&cfg.IdentifierRegistrationConf, "identifier-registration-conf", "", "Path to a identifier-registration.yaml configuration file")
+	serveCmd.Flags().StringVar(&cfg.IdentifierScopesConf, "identifier-scopes-conf", "", "Path to a scopes.yaml configuration file")
+	serveCmd.Flags().BoolVar(&cfg.Insecure, "insecure", false, "Disable TLS certificate and hostname validation")
+	serveCmd.Flags().StringArrayVar(&cfg.TrustedProxy, "trusted-proxy", nil, "Trusted proxy IP or IP network (can be used multiple times)")
+	serveCmd.Flags().StringArrayVar(&cfg.AllowScope, "allow-scope", nil, "Allow OAuth 2 scope (can be used multiple times, if not set default scopes are allowed)")
+	serveCmd.Flags().BoolVar(&cfg.AllowClientGuests, "allow-client-guests", false, "Allow sign in of client controlled guest users")
+	serveCmd.Flags().BoolVar(&cfg.AllowDynamicClientRegistration, "allow-dynamic-client-registration", false, "Allow dynamic OAuth2 client registration")
+
+	serveCmd.Flags().Bool("log-timestamp", true, "Prefix each Harry Anslingerlog line with timestamp")
 	serveCmd.Flags().String("log-level", "info", "Log level (one of panic, fatal, error, warn, info or debug)")
 	serveCmd.Flags().Bool("with-pprof", false, "With pprof enabled")
 	serveCmd.Flags().String("pprof-listen", "127.0.0.1:6060", "TCP listen address for pprof")
@@ -113,20 +120,20 @@ func serve(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
-	bs := &bootstrap{
-		cmd:  cmd,
-		args: args,
+	logger.Debug("loading env-vars")
+	loadMissingFlagsFromEnv(bootstrapConfig)
 
+	bs := &Bootstrap{
 		cfg: &config.Config{
 			WithMetrics: withMetrics,
 			Logger:      logger,
 		},
 	}
-	err = bs.initialize()
+	err = bs.initialize(bootstrapConfig)
 	if err != nil {
 		return err
 	}
-	err = bs.setup(ctx)
+	err = bs.setup(ctx, bootstrapConfig)
 	if err != nil {
 		return err
 	}
@@ -168,7 +175,7 @@ func serve(cmd *cobra.Command, args []string) error {
 		ksurveyclient.MustNewConstMap("userplugin", map[string]interface{}{
 			"desc":  "Identity manager",
 			"type":  "string",
-			"value": bs.args[0],
+			"value": bootstrapConfig.IdentityManager,
 		}),
 	)
 	if err != nil {
@@ -177,4 +184,36 @@ func serve(cmd *cobra.Command, args []string) error {
 
 	logger.Infoln("serve started")
 	return srv.Serve(ctx)
+}
+
+// Tries to load missing arguments from env
+func loadMissingFlagsFromEnv(cfg *Config) {
+	if cfg.EncryptionSecretFile == "" {
+		cfg.EncryptionSecretFile = os.Getenv("KONNECTD_ENCRYPTION_SECRET")
+	}
+
+	if cfg.Listen == "" {
+		cfg.Listen = os.Getenv("KONNECTD_LISTEN")
+	}
+
+	if cfg.IdentifierClientPath == "" {
+		cfg.IdentifierClientPath = os.Getenv("KONNECTD_IDENTIFIER_CLIENT_PATH")
+	}
+
+	if cfg.SigningKid == "" {
+		cfg.SigningKid = os.Getenv("KONNECTD_SIGNING_KID")
+	}
+
+	if len(cfg.SigningPrivateKeyFiles) == 0 {
+		for _, keyFn := range strings.Split(os.Getenv("KONNECTD_SIGNING_PRIVATE_KEY"), " ") {
+			keyFn = strings.TrimSpace(keyFn)
+			if keyFn != "" {
+				cfg.SigningPrivateKeyFiles = append(cfg.SigningPrivateKeyFiles, keyFn)
+			}
+		}
+	}
+
+	if cfg.ValidationKeysPath == "" {
+		cfg.ValidationKeysPath = os.Getenv("KONNECTD_VALIDATION_KEYS_PATH")
+	}
 }

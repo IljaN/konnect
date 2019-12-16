@@ -22,7 +22,7 @@ import (
 	identityManagers "stash.kopano.io/kc/konnect/identity/managers"
 )
 
-func newGuestIdentityManager(bs *bootstrap) (identity.Manager, error) {
+func newGuestIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	logger := bs.cfg.Logger
 
 	identityManagerConfig := &identity.Config{

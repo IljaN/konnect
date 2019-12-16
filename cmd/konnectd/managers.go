@@ -29,7 +29,7 @@ import (
 	codeManagers "stash.kopano.io/kc/konnect/oidc/code/managers"
 )
 
-func newManagers(ctx context.Context, bs *bootstrap) (*managers.Managers, error) {
+func newManagers(ctx context.Context, bs *Bootstrap) (*managers.Managers, error) {
 	logger := bs.cfg.Logger
 
 	var err error
