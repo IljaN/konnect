@@ -29,7 +29,7 @@ import (
 	identityManagers "stash.kopano.io/kc/konnect/identity/managers"
 )
 
-func newLDAPIdentityManager(bs *bootstrap) (identity.Manager, error) {
+func newLDAPIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	logger := bs.cfg.Logger
 
 	if bs.authorizationEndpointURI.String() != "" {

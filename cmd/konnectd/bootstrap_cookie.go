@@ -29,7 +29,7 @@ import (
 	identityManagers "stash.kopano.io/kc/konnect/identity/managers"
 )
 
-func newCookieIdentityManager(bs *bootstrap) (identity.Manager, error) {
+func newCookieIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	logger := bs.cfg.Logger
 
 	if bs.authorizationEndpointURI.EscapedPath() == "" {

@@ -213,7 +213,7 @@ func parsePEMValidator(pemBytes []byte) (crypto.PublicKey, error) {
 	return validator, nil
 }
 
-func addSignerWithIDFromFile(fn string, kid string, bs *bootstrap) error {
+func addSignerWithIDFromFile(fn string, kid string, bs *Bootstrap) error {
 	fi, err := os.Lstat(fn)
 	if err != nil {
 		return fmt.Errorf("failed load load signer key: %v", err)
@@ -266,7 +266,7 @@ func addSignerWithIDFromFile(fn string, kid string, bs *bootstrap) error {
 	return nil
 }
 
-func validateSigners(bs *bootstrap) error {
+func validateSigners(bs *Bootstrap) error {
 	haveRSA := false
 	haveECDSA := false
 	haveEd25519 := false
@@ -318,7 +318,7 @@ func validateSigners(bs *bootstrap) error {
 	return nil
 }
 
-func addValidatorsFromPath(pn string, bs *bootstrap) error {
+func addValidatorsFromPath(pn string, bs *Bootstrap) error {
 	fi, err := os.Lstat(pn)
 	if err != nil {
 		return fmt.Errorf("failed load load validator keys: %v", err)
