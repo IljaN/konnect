@@ -15,7 +15,7 @@
  *
  */
 
-package main
+package bootstrap
 
 import (
 	"fmt"
@@ -29,8 +29,8 @@ import (
 	identityManagers "stash.kopano.io/kc/konnect/identity/managers"
 )
 
-func newCookieIdentityManager(bs *Bootstrap) (identity.Manager, error) {
-	logger := bs.cfg.Logger
+func newCookieIdentityManager(bs *bootstrap, cfg *Config) (identity.Manager, error) {
+	logger := bs.Cfg.Logger
 
 	if bs.authorizationEndpointURI.EscapedPath() == "" {
 		bs.authorizationEndpointURI.Path = bs.makeURIPath(apiTypeKonnect, "/authorize")
@@ -40,10 +40,10 @@ func newCookieIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 		return nil, fmt.Errorf("URI path must be absolute")
 	}
 
-	if len(bs.args) < 2 {
+	if cfg.CookieBackendUri == "" {
 		return nil, fmt.Errorf("cookie backend requires the backend URI as argument")
 	}
-	backendURI, backendURIErr := url.Parse(bs.args[1])
+	backendURI, backendURIErr := url.Parse(cfg.CookieBackendUri)
 	if backendURIErr != nil || !backendURI.IsAbs() {
 		if backendURIErr == nil {
 			backendURIErr = fmt.Errorf("URI must have a scheme")
@@ -52,9 +52,9 @@ func newCookieIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	}
 
 	var cookieNames []string
-	if len(bs.args) > 2 {
+	if len(cfg.CookieNames) > 0 {
 		// TODO(longsleep): Add proper usage help.
-		cookieNames = bs.args[2:]
+		cookieNames = cfg.CookieNames
 	}
 
 	identityManagerConfig := &identity.Config{
@@ -62,10 +62,10 @@ func newCookieIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 
 		Logger: logger,
 
-		ScopesSupported: bs.cfg.AllowedScopes,
+		ScopesSupported: bs.Cfg.AllowedScopes,
 	}
 
-	cookieIdentityManager := identityManagers.NewCookieIdentityManager(identityManagerConfig, backendURI, cookieNames, 30*time.Second, bs.cfg.HTTPTransport)
+	cookieIdentityManager := identityManagers.NewCookieIdentityManager(identityManagerConfig, backendURI, cookieNames, 30*time.Second, bs.Cfg.HTTPTransport)
 	logger.WithFields(logrus.Fields{
 		"backend": backendURI,
 		"signIn":  bs.signInFormURI,

@@ -15,21 +15,25 @@
  *
  */
 
-package main
+package bootstrap
 
 import (
 	"stash.kopano.io/kc/konnect/identity"
 	identityManagers "stash.kopano.io/kc/konnect/identity/managers"
 )
 
-func newGuestIdentityManager(bs *Bootstrap) (identity.Manager, error) {
-	logger := bs.cfg.Logger
+func newDummyIdentityManager(bs *bootstrap) (identity.Manager, error) {
+	logger := bs.Cfg.Logger
 
 	identityManagerConfig := &identity.Config{
 		Logger: logger,
+
+		ScopesSupported: bs.Cfg.AllowedScopes,
 	}
 
-	guestIdentityManager := identityManagers.NewGuestIdentityManager(identityManagerConfig)
+	sub := "dummy"
+	dummyIdentityManager := identityManagers.NewDummyIdentityManager(identityManagerConfig, sub)
+	logger.WithField("sub", sub).Warnln("using dummy identity manager")
 
-	return guestIdentityManager, nil
+	return dummyIdentityManager, nil
 }

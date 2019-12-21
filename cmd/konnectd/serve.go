@@ -22,8 +22,10 @@ import (
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"runtime"
+	"stash.kopano.io/kc/konnect/bootstrap"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -37,20 +39,29 @@ import (
 	"stash.kopano.io/kc/konnect/version"
 )
 
-// Defaults.
-const (
-	defaultListenAddr           = "127.0.0.1:8777"
-	defaultIdentifierClientPath = "./identifier-webapp"
-	defaultSigningKeyID         = "default"
-	defaultSigningKeyBits       = 2048
-)
-
-var bootstrapConfig = &Config{}
+var bootstrapConfig = &bootstrap.Config{}
 
 func commandServe() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:   "serve <identity-manager> [...args]",
 		Short: "Start server and listen for requests",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 1 {
+				return fmt.Errorf("identity-manager argument missing, use one of kc, ldap, cookie, dummy")
+			}
+
+			bootstrapConfig.IdentityManager = args[0]
+			if bootstrapConfig.IdentityManager == "cookie" {
+				if len(args) < 2 {
+					return fmt.Errorf("cookie-url required")
+				}
+				bootstrapConfig.CookieBackendUri = args[1]
+				cookieNames := args[2]
+				bootstrapConfig.CookieNames = strings.Split(cookieNames, " ")
+			}
+
+			return nil
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := serve(cmd, args); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -61,19 +72,19 @@ func commandServe() *cobra.Command {
 
 	cfg := bootstrapConfig
 
-	serveCmd.Flags().StringVar(&cfg.Listen, "listen", "", fmt.Sprintf("TCP listen address (default \"%s\")", defaultListenAddr))
+	serveCmd.Flags().StringVar(&cfg.Listen, "listen", envOrDefault("KONNECTD_LISTEN", defaultListenAddr), fmt.Sprintf("TCP listen address (default \"%s\")", defaultListenAddr))
 	serveCmd.Flags().StringVar(&cfg.ISS, "iss", "", "OIDC issuer URL")
-	serveCmd.Flags().StringArrayVar(&cfg.SigningPrivateKeyFiles, "signing-private-key", nil, "Full path to PEM encoded private key file (must match the --signing-method algorithm)")
-	serveCmd.Flags().StringVar(&cfg.SigningKid, "signing-kid", "", "Value of kid field to use in created tokens (uniquely identifying the signing-private-key)")
-	serveCmd.Flags().StringVar(&cfg.ValidationKeysPath, "validation-keys-path", "", "Full path to a folder containing PEM encoded private or public key files used for token validaton (file name without extension is used as kid)")
-	serveCmd.Flags().StringVar(&cfg.EncryptionSecretFile, "encryption-secret", "", fmt.Sprintf("Full path to a file containing a %d bytes secret key", encryption.KeySize))
+	serveCmd.Flags().StringArrayVar(&cfg.SigningPrivateKeyFiles, "signing-private-key", listEnvArg("KONNECTD_SIGNING_PRIVATE_KEY"), "Full path to PEM encoded private key file (must match the --signing-method algorithm)")
+	serveCmd.Flags().StringVar(&cfg.SigningKid, "signing-kid", os.Getenv("KONNECTD_SIGNING_KID"), "Value of kid field to use in created tokens (uniquely identifying the signing-private-key)")
+	serveCmd.Flags().StringVar(&cfg.ValidationKeysPath, "validation-keys-path", os.Getenv("KONNECTD_VALIDATION_KEYS_PATH"), "Full path to a folder containing PEM encoded private or public key files used for token validaton (file name without extension is used as kid)")
+	serveCmd.Flags().StringVar(&cfg.EncryptionSecretFile, "encryption-secret", os.Getenv("KONNECTD_ENCRYPTION_SECRET"), fmt.Sprintf("Full path to a file containing a %d bytes secret key", encryption.KeySize))
 	serveCmd.Flags().StringVar(&cfg.SigningMethod, "signing-method", "PS256", "JWT default signing method")
 	serveCmd.Flags().StringVar(&cfg.URIBasePath, "uri-base-path", "", "Custom base path for URI endpoints")
 	serveCmd.Flags().StringVar(&cfg.SignInUri, "sign-in-uri", "", "Custom redirection URI to sign-in form")
 	serveCmd.Flags().StringVar(&cfg.SignedOutUri, "signed-out-uri", "", "Custom redirection URI to signed-out goodbye page")
 	serveCmd.Flags().StringVar(&cfg.AuthorizationEndpointURI, "authorization-endpoint-uri", "", "Custom authorization endpoint URI")
 	serveCmd.Flags().StringVar(&cfg.EndsessionEndpointURI, "endsession-endpoint-uri", "", "Custom endsession endpoint URI")
-	serveCmd.Flags().StringVar(&cfg.IdentifierClientPath, "identifier-client-path", "", fmt.Sprintf("Path to the identifier web client base folder (default \"%s\")", defaultIdentifierClientPath))
+	serveCmd.Flags().StringVar(&cfg.IdentifierClientPath, "identifier-client-path", envOrDefault("KONNECTD_IDENTIFIER_CLIENT_PATH", defaultIdentifierClientPath), fmt.Sprintf("Path to the identifier web client base folder (default \"%s\")", bootstrap.DefaultIdentifierClientPath))
 	serveCmd.Flags().StringVar(&cfg.IdentifierRegistrationConf, "identifier-registration-conf", "", "Path to a identifier-registration.yaml configuration file")
 	serveCmd.Flags().StringVar(&cfg.IdentifierScopesConf, "identifier-scopes-conf", "", "Path to a scopes.yaml configuration file")
 	serveCmd.Flags().BoolVar(&cfg.Insecure, "insecure", false, "Disable TLS certificate and hostname validation")
@@ -82,13 +93,12 @@ func commandServe() *cobra.Command {
 	serveCmd.Flags().BoolVar(&cfg.AllowClientGuests, "allow-client-guests", false, "Allow sign in of client controlled guest users")
 	serveCmd.Flags().BoolVar(&cfg.AllowDynamicClientRegistration, "allow-dynamic-client-registration", false, "Allow dynamic OAuth2 client registration")
 
-	serveCmd.Flags().Bool("log-timestamp", true, "Prefix each Harry Anslingerlog line with timestamp")
+	serveCmd.Flags().Bool("log-timestamp", true, "Prefix each log line with timestamp")
 	serveCmd.Flags().String("log-level", "info", "Log level (one of panic, fatal, error, warn, info or debug)")
 	serveCmd.Flags().Bool("with-pprof", false, "With pprof enabled")
 	serveCmd.Flags().String("pprof-listen", "127.0.0.1:6060", "TCP listen address for pprof")
 	serveCmd.Flags().Bool("with-metrics", false, "Enable metrics")
 	serveCmd.Flags().String("metrics-listen", "127.0.0.1:6777", "TCP listen address for metrics")
-
 	return serveCmd
 }
 
@@ -120,29 +130,20 @@ func serve(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
-	logger.Debug("loading env-vars")
-	loadMissingFlagsFromEnv(bootstrapConfig)
+	bs, err := bootstrap.Boot(ctx, bootstrapConfig, &config.Config{
+		WithMetrics: withMetrics,
+		Logger:      logger,
+	})
 
-	bs := &Bootstrap{
-		cfg: &config.Config{
-			WithMetrics: withMetrics,
-			Logger:      logger,
-		},
-	}
-	err = bs.initialize(bootstrapConfig)
-	if err != nil {
-		return err
-	}
-	err = bs.setup(ctx, bootstrapConfig)
 	if err != nil {
 		return err
 	}
 
 	srv, err := server.NewServer(&server.Config{
-		Config: bs.cfg,
+		Config: bs.Cfg,
 
-		Handler: bs.managers.Must("handler").(http.Handler),
-		Routes:  []server.WithRoutes{bs.managers.Must("identity").(server.WithRoutes)},
+		Handler: bs.Managers.Must("handler").(http.Handler),
+		Routes:  []server.WithRoutes{bs.Managers.Must("identity").(server.WithRoutes)},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create server: %v", err)
@@ -165,8 +166,12 @@ func serve(cmd *cobra.Command, args []string) error {
 
 	// Survey support.
 	var guid []byte
-	if bs.issuerIdentifierURI.Hostname() != "localhost" {
-		guid = []byte(bs.issuerIdentifierURI.String())
+	issUrl, err := url.Parse(bootstrapConfig.ISS)
+	if err != nil {
+		logger.WithError(err).Errorln("unable to start survey-client")
+	}
+	if issUrl.Hostname() != "localhost" {
+		guid = []byte(issUrl.String())
 	}
 	err = autosurvey.Start(ctx,
 		"konnectd",
@@ -186,34 +191,23 @@ func serve(cmd *cobra.Command, args []string) error {
 	return srv.Serve(ctx)
 }
 
-// Tries to load missing arguments from env
-func loadMissingFlagsFromEnv(cfg *Config) {
-	if cfg.EncryptionSecretFile == "" {
-		cfg.EncryptionSecretFile = os.Getenv("KONNECTD_ENCRYPTION_SECRET")
+func envOrDefault(name string, def string) string {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
 	}
 
-	if cfg.Listen == "" {
-		cfg.Listen = os.Getenv("KONNECTD_LISTEN")
-	}
+	return v
+}
 
-	if cfg.IdentifierClientPath == "" {
-		cfg.IdentifierClientPath = os.Getenv("KONNECTD_IDENTIFIER_CLIENT_PATH")
-	}
-
-	if cfg.SigningKid == "" {
-		cfg.SigningKid = os.Getenv("KONNECTD_SIGNING_KID")
-	}
-
-	if len(cfg.SigningPrivateKeyFiles) == 0 {
-		for _, keyFn := range strings.Split(os.Getenv("KONNECTD_SIGNING_PRIVATE_KEY"), " ") {
-			keyFn = strings.TrimSpace(keyFn)
-			if keyFn != "" {
-				cfg.SigningPrivateKeyFiles = append(cfg.SigningPrivateKeyFiles, keyFn)
-			}
+func listEnvArg(name string) []string {
+	list := make([]string, 0)
+	for _, keyFn := range strings.Split(os.Getenv(name), " ") {
+		keyFn = strings.TrimSpace(keyFn)
+		if keyFn != "" {
+			list = append(list, keyFn)
 		}
 	}
 
-	if cfg.ValidationKeysPath == "" {
-		cfg.ValidationKeysPath = os.Getenv("KONNECTD_VALIDATION_KEYS_PATH")
-	}
+	return list
 }

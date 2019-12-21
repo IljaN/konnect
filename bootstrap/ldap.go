@@ -15,7 +15,7 @@
  *
  */
 
-package main
+package bootstrap
 
 import (
 	"fmt"
@@ -29,8 +29,8 @@ import (
 	identityManagers "stash.kopano.io/kc/konnect/identity/managers"
 )
 
-func newLDAPIdentityManager(bs *Bootstrap) (identity.Manager, error) {
-	logger := bs.cfg.Logger
+func newLDAPIdentityManager(bs *bootstrap) (identity.Manager, error) {
+	logger := bs.Cfg.Logger
 
 	if bs.authorizationEndpointURI.String() != "" {
 		return nil, fmt.Errorf("ldap backend is incompatible with authorization-endpoint-uri parameter")
@@ -71,7 +71,7 @@ func newLDAPIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	}
 
 	identifierBackend, identifierErr := identifierBackends.NewLDAPIdentifierBackend(
-		bs.cfg,
+		bs.Cfg,
 		bs.tlsClientConfig,
 		os.Getenv("LDAP_URI"),
 		os.Getenv("LDAP_BINDDN"),
@@ -89,7 +89,7 @@ func newLDAPIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	fullAuthorizationEndpointURL := withSchemeAndHost(bs.authorizationEndpointURI, bs.issuerIdentifierURI)
 
 	activeIdentifier, err := identifier.NewIdentifier(&identifier.Config{
-		Config: bs.cfg,
+		Config: bs.Cfg,
 
 		BaseURI:         bs.issuerIdentifierURI,
 		PathPrefix:      strings.TrimSuffix(bs.makeURIPath(apiTypeSignin, ""), "/"),
@@ -115,7 +115,7 @@ func newLDAPIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 
 		Logger: logger,
 
-		ScopesSupported: bs.cfg.AllowedScopes,
+		ScopesSupported: bs.Cfg.AllowedScopes,
 	}
 
 	identifierIdentityManager := identityManagers.NewIdentifierIdentityManager(identityManagerConfig, activeIdentifier)
