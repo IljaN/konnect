@@ -15,7 +15,7 @@
  *
  */
 
-package main
+package bootstrap
 
 import (
 	"context"
@@ -58,6 +58,13 @@ const (
 	apiTypeSignin  = "signin"
 )
 
+// Defaults.
+const (
+	DefaultIdentifierClientPath = "./identifier-webapp"
+	DefaultSigningKeyID         = "default"
+	DefaultSigningKeyBits       = 2048
+)
+
 //Stringly typed application config, represents the user accessible config params
 type Config struct {
 	ISS                            string
@@ -81,12 +88,13 @@ type Config struct {
 	SigningMethod                  string
 	SigningPrivateKeyFiles         []string
 	ValidationKeysPath             string
-	CookieName                     string
+	CookieBackendUri               string
+	CookieNames                    []string
 }
 
 // Bootstrap is a data structure to hold configuration required to start
 // konnectd.
-type Bootstrap struct {
+type bootstrap struct {
 	signInFormURI            *url.URL
 	signedOutURI             *url.URL
 	authorizationEndpointURI *url.URL
@@ -109,8 +117,8 @@ type Bootstrap struct {
 	accessTokenDurationSeconds uint64
 	uriBasePath                string
 
-	cfg      *config.Config
-	managers *managers.Managers
+	Cfg      *config.Config
+	Managers *managers.Managers
 }
 
 func init() {
@@ -126,10 +134,28 @@ func init() {
 	}
 }
 
+func Boot(ctx context.Context, bsConf *Config, serverConf *config.Config) (*bootstrap, error) {
+	bs := &bootstrap{
+		Cfg: serverConf,
+	}
+
+	err := bs.initialize(bsConf)
+	if err != nil {
+		return nil, err
+	}
+
+	err = bs.setup(ctx, bsConf)
+	if err != nil {
+		return nil, err
+	}
+
+	return bs, nil
+}
+
 // initialize, parsed parameters from commandline with validation and adds them
 // to the associated Bootstrap data.
-func (bs *Bootstrap) initialize(cfg *Config) error {
-	logger := bs.cfg.Logger
+func (bs *bootstrap) initialize(cfg *Config) error {
+	logger := bs.Cfg.Logger
 	var err error
 
 	if cfg.IdentityManager == "" {
@@ -179,33 +205,33 @@ func (bs *Bootstrap) initialize(cfg *Config) error {
 
 	for _, trustedProxy := range cfg.TrustedProxy {
 		if ip := net.ParseIP(trustedProxy); ip != nil {
-			bs.cfg.TrustedProxyIPs = append(bs.cfg.TrustedProxyIPs, &ip)
+			bs.Cfg.TrustedProxyIPs = append(bs.Cfg.TrustedProxyIPs, &ip)
 			continue
 		}
 		if _, ipNet, errParseCIDR := net.ParseCIDR(trustedProxy); errParseCIDR == nil {
-			bs.cfg.TrustedProxyNets = append(bs.cfg.TrustedProxyNets, ipNet)
+			bs.Cfg.TrustedProxyNets = append(bs.Cfg.TrustedProxyNets, ipNet)
 			continue
 		}
 	}
-	if len(bs.cfg.TrustedProxyIPs) > 0 {
-		logger.Infoln("trusted proxy IPs", bs.cfg.TrustedProxyIPs)
+	if len(bs.Cfg.TrustedProxyIPs) > 0 {
+		logger.Infoln("trusted proxy IPs", bs.Cfg.TrustedProxyIPs)
 	}
-	if len(bs.cfg.TrustedProxyNets) > 0 {
-		logger.Infoln("trusted proxy networks", bs.cfg.TrustedProxyNets)
+	if len(bs.Cfg.TrustedProxyNets) > 0 {
+		logger.Infoln("trusted proxy networks", bs.Cfg.TrustedProxyNets)
 	}
 
 	if len(cfg.AllowScope) > 0 {
-		bs.cfg.AllowedScopes = cfg.AllowScope
-		logger.Infoln("using custom allowed OAuth 2 scopes", bs.cfg.AllowedScopes)
+		bs.Cfg.AllowedScopes = cfg.AllowScope
+		logger.Infoln("using custom allowed OAuth 2 scopes", bs.Cfg.AllowedScopes)
 	}
 
-	bs.cfg.AllowClientGuests = cfg.AllowClientGuests
-	if bs.cfg.AllowClientGuests {
+	bs.Cfg.AllowClientGuests = cfg.AllowClientGuests
+	if bs.Cfg.AllowClientGuests {
 		logger.Infoln("client controlled guests are enabled")
 	}
 
-	bs.cfg.AllowDynamicClientRegistration = cfg.AllowDynamicClientRegistration
-	if bs.cfg.AllowDynamicClientRegistration {
+	bs.Cfg.AllowDynamicClientRegistration = cfg.AllowDynamicClientRegistration
+	if bs.Cfg.AllowDynamicClientRegistration {
 		logger.Infoln("dynamic client registration is enabled")
 	}
 
@@ -225,16 +251,9 @@ func (bs *Bootstrap) initialize(cfg *Config) error {
 		bs.encryptionSecret = rndm.GenerateRandomBytes(encryption.KeySize)
 	}
 
-	bs.cfg.ListenAddr = cfg.Listen
-	if bs.cfg.ListenAddr == "" {
-		bs.cfg.ListenAddr = defaultListenAddr
-	}
+	bs.Cfg.ListenAddr = cfg.Listen
 
 	bs.identifierClientPath = cfg.IdentifierClientPath
-
-	if bs.identifierClientPath == "" {
-		bs.identifierClientPath = defaultIdentifierClientPath
-	}
 
 	bs.identifierRegistrationConf = cfg.IdentifierRegistrationConf
 	if bs.identifierRegistrationConf != "" {
@@ -268,14 +287,14 @@ func (bs *Bootstrap) initialize(cfg *Config) error {
 		first := true
 		for _, signingKeyFn := range signingKeyFns {
 			logger.WithField("path", signingKeyFn).Infoln("loading signing key")
-			err = addSignerWithIDFromFile(signingKeyFn, "", bs)
+			err = AddSignerWithIDFromFile(signingKeyFn, "", bs)
 			if err != nil {
 				return err
 			}
 			if first {
 				// Also add key under the provided id.
 				first = false
-				err = addSignerWithIDFromFile(signingKeyFn, bs.signingKeyID, bs)
+				err = AddSignerWithIDFromFile(signingKeyFn, bs.signingKeyID, bs)
 				if err != nil {
 					return err
 				}
@@ -285,13 +304,13 @@ func (bs *Bootstrap) initialize(cfg *Config) error {
 		//NOTE(longsleep): remove me - create keypair a random key pair.
 		sm := jwt.SigningMethodPS256
 		bs.signingMethod = sm
-		logger.WithField("alg", sm.Name).Warnf("missing --signing-private-key parameter, using random %d bit signing key", defaultSigningKeyBits)
-		signer, _ := rsa.GenerateKey(rand.Reader, defaultSigningKeyBits)
+		logger.WithField("alg", sm.Name).Warnf("missing --signing-private-key parameter, using random %d bit signing key", DefaultSigningKeyBits)
+		signer, _ := rsa.GenerateKey(rand.Reader, DefaultSigningKeyBits)
 		bs.signers[bs.signingKeyID] = signer
 	}
 
 	// Ensure we have a signer for the things we need.
-	err = validateSigners(bs)
+	err = ValidateSigners(bs)
 	if err != nil {
 		return err
 	}
@@ -299,13 +318,13 @@ func (bs *Bootstrap) initialize(cfg *Config) error {
 	validationKeysPath := cfg.ValidationKeysPath
 	if validationKeysPath != "" {
 		logger.WithField("path", validationKeysPath).Infoln("loading validation keys")
-		err = addValidatorsFromPath(validationKeysPath, bs)
+		err = AddValidatorsFromPath(validationKeysPath, bs)
 		if err != nil {
 			return err
 		}
 	}
 
-	bs.cfg.HTTPTransport = utils.HTTPTransportWithTLSClientConfig(bs.tlsClientConfig)
+	bs.Cfg.HTTPTransport = utils.HTTPTransportWithTLSClientConfig(bs.tlsClientConfig)
 	bs.accessTokenDurationSeconds = 10 * 60 // 10 Minutes.
 
 	return nil
@@ -313,8 +332,8 @@ func (bs *Bootstrap) initialize(cfg *Config) error {
 
 // setup takes care of setting up the managers based on the associated
 // Bootstrap's data.
-func (bs *Bootstrap) setup(ctx context.Context, cfg *Config) error {
-	managers, err := newManagers(ctx, bs)
+func (bs *bootstrap) setup(ctx context.Context, cfg *Config) error {
+	managers, err := NewManagers(ctx, bs)
 	if err != nil {
 		return err
 	}
@@ -349,11 +368,11 @@ func (bs *Bootstrap) setup(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("failed to initialize provider metadata: %v", err)
 	}
 
-	bs.managers = managers
+	bs.Managers = managers
 	return nil
 }
 
-func (bs *Bootstrap) makeURIPath(api string, subpath string) string {
+func (bs *bootstrap) makeURIPath(api string, subpath string) string {
 	subpath = strings.TrimPrefix(subpath, "/")
 
 	switch api {
@@ -366,9 +385,9 @@ func (bs *Bootstrap) makeURIPath(api string, subpath string) string {
 	}
 }
 
-func (bs *Bootstrap) setupIdentity(ctx context.Context, cfg *Config) (identity.Manager, error) {
+func (bs *bootstrap) setupIdentity(ctx context.Context, cfg *Config) (identity.Manager, error) {
 	var err error
-	logger := bs.cfg.Logger
+	logger := bs.Cfg.Logger
 
 	if cfg.IdentityManager == "" {
 		return nil, fmt.Errorf("identity-manager argument missing")
@@ -380,7 +399,7 @@ func (bs *Bootstrap) setupIdentity(ctx context.Context, cfg *Config) (identity.M
 	var identityManager identity.Manager
 	switch identityManagerName {
 	case identityManagerNameCookie:
-		identityManager, err = newCookieIdentityManager(bs)
+		identityManager, err = newCookieIdentityManager(bs, cfg)
 
 	case identityManagerNameKC:
 		identityManager, err = newKCIdentityManager(bs)
@@ -406,13 +425,13 @@ func (bs *Bootstrap) setupIdentity(ctx context.Context, cfg *Config) (identity.M
 	return identityManager, nil
 }
 
-func (bs *Bootstrap) setupGuest(ctx context.Context, identityManager identity.Manager) (identity.Manager, error) {
-	if !bs.cfg.AllowClientGuests {
+func (bs *bootstrap) setupGuest(ctx context.Context, identityManager identity.Manager) (identity.Manager, error) {
+	if !bs.Cfg.AllowClientGuests {
 		return nil, nil
 	}
 
 	var err error
-	logger := bs.cfg.Logger
+	logger := bs.Cfg.Logger
 
 	guestManager, err := newGuestIdentityManager(bs)
 	if err != nil {
@@ -425,9 +444,9 @@ func (bs *Bootstrap) setupGuest(ctx context.Context, identityManager identity.Ma
 	return guestManager, nil
 }
 
-func (bs *Bootstrap) setupOIDCProvider(ctx context.Context) (*oidcProvider.Provider, error) {
+func (bs *bootstrap) setupOIDCProvider(ctx context.Context) (*oidcProvider.Provider, error) {
 	var err error
-	logger := bs.cfg.Logger
+	logger := bs.Cfg.Logger
 
 	sessionCookiePath, err := getCommonURLPathPrefix(bs.authorizationEndpointURI.EscapedPath(), bs.endSessionEndpointURI.EscapedPath())
 	if err != nil {
@@ -435,12 +454,12 @@ func (bs *Bootstrap) setupOIDCProvider(ctx context.Context) (*oidcProvider.Provi
 	}
 
 	var registrationPath = ""
-	if bs.cfg.AllowDynamicClientRegistration {
+	if bs.Cfg.AllowDynamicClientRegistration {
 		registrationPath = bs.makeURIPath(apiTypeKonnect, "/register")
 	}
 
 	provider, err := oidcProvider.NewProvider(&oidcProvider.Config{
-		Config: bs.cfg,
+		Config: bs.Cfg,
 
 		IssuerIdentifier:       bs.issuerIdentifierURI.String(),
 		WellKnownPath:          "/.well-known/openid-configuration",
@@ -477,8 +496,8 @@ func (bs *Bootstrap) setupOIDCProvider(ctx context.Context) (*oidcProvider.Provi
 		if id == bs.signingKeyID {
 			err = provider.SetSigningKey(id, signer)
 			// Always set default key.
-			if id != defaultSigningKeyID {
-				provider.SetValidationKey(defaultSigningKeyID, signer.Public())
+			if id != DefaultSigningKeyID {
+				provider.SetValidationKey(DefaultSigningKeyID, signer.Public())
 			}
 		} else {
 			// Set non default signers as well.
@@ -502,7 +521,7 @@ func (bs *Bootstrap) setupOIDCProvider(ctx context.Context) (*oidcProvider.Provi
 	}
 	if bs.signingKeyID == "" {
 		// Ensure that there is a default signing Key ID even if none was set.
-		provider.SetValidationKey(defaultSigningKeyID, sk.PrivateKey.Public())
+		provider.SetValidationKey(DefaultSigningKeyID, sk.PrivateKey.Public())
 	}
 	logger.WithFields(logrus.Fields{
 		"id":     sk.ID,

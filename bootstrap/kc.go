@@ -15,7 +15,7 @@
  *
  */
 
-package main
+package bootstrap
 
 import (
 	"fmt"
@@ -35,8 +35,8 @@ import (
 	"stash.kopano.io/kc/konnect/version"
 )
 
-func newKCIdentityManager(bs *Bootstrap) (identity.Manager, error) {
-	logger := bs.cfg.Logger
+func newKCIdentityManager(bs *bootstrap) (identity.Manager, error) {
+	logger := bs.Cfg.Logger
 
 	if bs.authorizationEndpointURI.String() != "" {
 		return nil, fmt.Errorf("kc backend is incompatible with authorization-endpoint-uri parameter")
@@ -78,7 +78,7 @@ func newKCIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	}
 	if !useGlobalSession && bs.accessTokenDurationSeconds+60 > sessionTimeoutSeconds {
 		bs.accessTokenDurationSeconds = sessionTimeoutSeconds - 60
-		bs.cfg.Logger.Warnf("limiting access token duration to %d seconds because of lower KOPANO_SERVER_SESSION_TIMEOUT", bs.accessTokenDurationSeconds)
+		bs.Cfg.Logger.Warnf("limiting access token duration to %d seconds because of lower KOPANO_SERVER_SESSION_TIMEOUT", bs.accessTokenDurationSeconds)
 	}
 	// Update kcc defaults to our values.
 	kcc.SessionAutorefreshInterval = time.Duration(sessionTimeoutSeconds-60) * time.Second
@@ -112,7 +112,7 @@ func newKCIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	}
 
 	identifierBackend, identifierErr := identifierBackends.NewKCIdentifierBackend(
-		bs.cfg,
+		bs.Cfg,
 		kopanoStorageServerClient,
 		useGlobalSession,
 		globalSessionUsername,
@@ -125,7 +125,7 @@ func newKCIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 	fullAuthorizationEndpointURL := withSchemeAndHost(bs.authorizationEndpointURI, bs.issuerIdentifierURI)
 
 	activeIdentifier, err := identifier.NewIdentifier(&identifier.Config{
-		Config: bs.cfg,
+		Config: bs.Cfg,
 
 		BaseURI:         bs.issuerIdentifierURI,
 		PathPrefix:      strings.TrimSuffix(bs.makeURIPath(apiTypeSignin, ""), "/"),
@@ -151,7 +151,7 @@ func newKCIdentityManager(bs *Bootstrap) (identity.Manager, error) {
 
 		Logger: logger,
 
-		ScopesSupported: bs.cfg.AllowedScopes,
+		ScopesSupported: bs.Cfg.AllowedScopes,
 	}
 
 	identifierIdentityManager := identityManagers.NewIdentifierIdentityManager(identityManagerConfig, activeIdentifier)

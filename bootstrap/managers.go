@@ -15,12 +15,11 @@
  *
  */
 
-package main
+package bootstrap
 
 import (
 	"context"
 	"fmt"
-
 	"stash.kopano.io/kc/konnect/managers"
 
 	identityAuthorities "stash.kopano.io/kc/konnect/identity/authorities"
@@ -29,8 +28,8 @@ import (
 	codeManagers "stash.kopano.io/kc/konnect/oidc/code/managers"
 )
 
-func newManagers(ctx context.Context, bs *Bootstrap) (*managers.Managers, error) {
-	logger := bs.cfg.Logger
+func NewManagers(ctx context.Context, bs *bootstrap) (*managers.Managers, error) {
+	logger := bs.Cfg.Logger
 
 	var err error
 	mgrs := managers.New()
