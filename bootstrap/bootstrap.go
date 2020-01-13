@@ -121,7 +121,7 @@ type bootstrap struct {
 	Managers *managers.Managers
 }
 
-func init() {
+func Boot(ctx context.Context, bsConf *Config, serverConf *config.Config) (*bootstrap, error) {
 	// NOTE(longsleep): Ensure to use same salt length as the hash size.
 	// See https://www.ietf.org/mail-archive/web/jose/current/msg02901.html for
 	// reference and https://github.com/dgrijalva/jwt-go/issues/285 for
@@ -132,9 +132,7 @@ func init() {
 			signingMethodRSAPSS.Options.SaltLength = rsa.PSSSaltLengthEqualsHash
 		}
 	}
-}
 
-func Boot(ctx context.Context, bsConf *Config, serverConf *config.Config) (*bootstrap, error) {
 	bs := &bootstrap{
 		Cfg: serverConf,
 	}
